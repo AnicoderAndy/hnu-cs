@@ -1,0 +1,385 @@
+\documentclass[a4paper, 11pt]{ctexart}
+\usepackage[top=2.54cm, bottom=2.54cm, left=3.18cm, right=3.18cm]{geometry}
+\usepackage{titlesec}
+\usepackage{hyperref}
+\usepackage{setspace}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+\usepackage{minted}
+\usepackage{amsmath}
+\usepackage{lmodern}
+
+% stretch line spacing
+\setstretch{1.5}
+\AtBeginEnvironment{minted}{\singlespacing}
+\AtBeginEnvironment{equation}{\singlespacing}
+
+% titlesec settings
+\let\oldsection\section
+\renewcommand{\section}{\clearpage\oldsection}
+
+% ctex settings
+\ctexset{
+    section = {
+        format = \raggedright\zihao{3}\heiti
+    }
+}
+
+% fancyhdr settings
+\pagestyle{fancy}
+\fancyhf{}
+\setlength{\headheight}{1.5cm}
+\fancyhead[C]{ShellLab实验报告}
+\renewcommand{\headrulewidth}{0.5pt}
+\fancyfoot[C]{\textbf{\thepage\quad/\quad\pageref{LastPage}}}
+
+% minted settings
+\setminted{
+    linenos,
+    frame = single
+}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Begin Document
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{document}
+\sloppy
+%%%%% Cover Page %%%%%
+\begin{titlepage}
+    \begin{center}
+        \vspace*{5cm}
+        \yahei\zihao{1}《计算机系统》\\ \vspace{50pt}ShellLab实验报告
+        \vfill
+        \zihao{3}
+        \begin{tabular}{ll}
+            班级: & GitHub\\
+            学号: & 78268851\\
+            姓名: & AnicoderAndy\\
+        \end{tabular}
+    \end{center}
+\end{titlepage}
+\setcounter{page}{2}
+
+%%%%% Table of Contents %%%%%
+\renewcommand{\contentsname}{\centering 目录}
+\tableofcontents
+
+\section{实验项目}
+\setcounter{subsection}{0}
+\subsection{项目名称}
+Shell Lab——实现简易Shell程序
+
+\subsection{实验目的}
+\begin{itemize}
+    \item 熟悉Linux Shell的基本概念。
+    \item 熟悉Linux的异常控制流。
+    \item 熟悉Linux的进程控制、进程间通信的基本方法。
+\end{itemize}
+
+\subsection{实验资源}
+\begin{itemize}
+    \item 实验环境：Linux Ubuntu 22.04 LTS
+    \item 实验工具：Visual Studio Code、GNU Make 4.3、GCC 11.4.0
+    \item 其他资源：实验手册、16个测试文件以及4个测试代码、测试脚本、\texttt{tsh.c}。
+\end{itemize}
+
+\section{实验任务}
+
+本实验要求实现一个建简易的Shell程序，要求支持执行程序、执行\texttt{quit}、\texttt{jobs}、\texttt{fg}、\texttt{bg}四个内置命令。
+
+本实验提供的代码实现了一些如解析命令行\texttt{parseline}、\texttt{sigquit}等简单的函数，需要实现：
+
+\begin{minted}{c}
+void eval(char* cmdline);
+int builtin_cmd(char** argv);
+void do_bgfg(char** argv);
+void waitfg(pid_t pid);
+
+void sigchld_handler(int sig);
+void sigtstp_handler(int sig);
+void sigint_handler(int sig);
+\end{minted}
+
+\subsection{便利工具函数}
+
+为了后续代码方便，实现\texttt{verbose\_printf}方便进行开启\texttt{-v}情况下的输出：
+
+\begin{minted}{c}
+inline int verbose_printf(const char* fmt, ...) {
+    if (verbose) {
+        va_list args;
+        va_start(args, fmt);
+        int ret = vprintf(fmt, args);
+        va_end(args);
+        return ret;
+    }
+    return -1;
+}
+\end{minted}
+
+由于\texttt{SIGCHLD}信号的处理函数和\texttt{waitfg}函数中都需要进行工作回收，因此实现了一个二者都可调用的工作回收函数：
+
+\begin{minted}{c}
+void job_reaping(pid_t pid, int status) {
+    if (WIFEXITED(status)) {
+        deletejob(jobs, pid);
+        verbose_printf("job_reaping: Job [%d] (%d) deleted\n",
+                       pid2jid(pid), pid);
+    } else if (WIFSIGNALED(status)) {
+        int jid = pid2jid(pid);
+        int sig = WTERMSIG(status);
+        deletejob(jobs, pid);
+        verbose_printf("job_reaping: Job [%d] (%d) deleted\n", jid,
+                       pid);
+        printf("Job [%d] (%d) terminated by signal %d\n", jid, pid,
+               sig);
+    } else if (WIFSTOPPED(status)) {
+        int jid = pid2jid(pid);
+        int sig = WSTOPSIG(status);
+        struct job_t* job = getjobjid(jobs, jid);
+        job->state = ST;
+        printf("Job [%d] (%d) stopped by signal %d\n", jid, pid, sig);
+    }
+}
+\end{minted}
+
+\subsection{\texttt{eval}解析函数}
+
+\texttt{eval}函数的功能是解析命令行，分析输入的命令是否合法，判断输入的是否是内置命令，执行指定输入的命令。
+
+\begin{minted}{c}
+void eval(char* cmdline) {
+    if (cmdline == NULL) {
+        return;
+    }
+    // Local copy of argument list
+    char* argv[MAXARGS];
+    // Parse the command line and specify if it is a background job
+    int bg = parseline(cmdline, argv);
+    if (argv[0] == NULL)
+        return;
+    int state = bg ? BG : FG;
+    // Judge if a built-in command is requested
+    if (builtin_cmd(argv)) {
+        return;
+    }
+
+    // Prepare to block SIGCHLD
+    sigset_t mask_all, prev_mask;
+    sigemptyset(&mask_all);
+    sigaddset(&mask_all, SIGCHLD);
+
+    // Fork a child process
+    sigprocmask(SIG_BLOCK, &mask_all, &prev_mask);
+    pid_t pid = fork();
+    if (pid == 0) {
+        // Child process
+        sigprocmask(SIG_SETMASK, &prev_mask, NULL);
+        setpgid(0, 0); // Set the process group ID to the child PID
+        if (execve(argv[0], argv, environ) < 0) {
+            printf("%s: Command not found\n", argv[0]);
+            exit(1);
+        }
+    } else if (pid > 0) {
+        // Parent process
+
+        // Add the job to the job list
+        addjob(jobs, pid, state, cmdline);
+        sigprocmask(SIG_SETMASK, &prev_mask, NULL);
+
+        if (state == FG) {
+            // Wait for the foreground job to terminate
+            waitfg(pid);
+        } else {
+            printf("[%d] (%d) %s", pid2jid(pid), pid, cmdline);
+        }
+    } else {
+        // Fork error
+    }
+    return;
+}
+\end{minted}
+
+这段代码首先试图以内置指令的方式执行输入命令；如果不是内置命令，则会执行\texttt{fork}函数创建子进程，子进程会执行\texttt{execve}函数来执行输入的命令，父进程会将子进程添加到作业列表中，并根据输入的命令是否是前台命令来决定是否等待子进程结束。
+
+在\texttt{fork}之前还要注意使用\texttt{sigprocmask}函数来阻塞\texttt{SIGCHLD}信号，以避免在子进程创建时父进程接收到信号导致的竞态错误。
+
+\subsection{执行内置函数}
+
+\texttt{builtin\_cmd}函数的功能是判断输入的命令是否是内置命令，如果是\texttt{quit}指令，直接执行\texttt{exit(0)}；如果是\texttt{jobs}指令，调用已经实现好的\texttt{listjobs}函数；如果是\texttt{fg}或\texttt{bg}，调用待实现的\texttt{do\_bgfg}函数；如果不是则返回\texttt{0}：
+
+\begin{minted}{c}
+int builtin_cmd(char** argv) {
+    if (strcmp(argv[0], "quit") == 0) {
+        exit(0);
+    } else if (strcmp(argv[0], "jobs") == 0) {
+        listjobs(jobs);
+        return 1;
+    } else if (strcmp(argv[0], "bg") == 0 ||
+               strcmp(argv[0], "fg") == 0) {
+        do_bgfg(argv);
+        return 1;
+    }
+    return 0; /* not a builtin command */
+}
+\end{minted}
+
+下面还需要实现\texttt{do\_bgfg}函数来处理\texttt{bg}和\texttt{fg}命令：
+
+\begin{minted}{c}
+void do_bgfg(char** argv) {
+    int jid = 0;
+    pid_t pid = 0;
+    struct job_t* job;
+
+    // Parse the argument of fg/bg
+    if (argv[1] == NULL) {
+        printf("%s command requires PID or %%jobid argument\n",
+               argv[0]);
+        return;
+    } else if (argv[1][0] == '%') {
+        jid = atoi(&argv[1][1]);
+        job = getjobjid(jobs, jid);
+        if (job == NULL) {
+            printf("%s: No such job\n", argv[1]);
+            return;
+        }
+        pid = job->pid;
+    } else if (isdigit(argv[1][0])) {
+        pid = atoi(argv[1]);
+        job = getjobpid(jobs, pid);
+        if (job == NULL) {
+            printf("(%d): No such process\n", pid);
+            return;
+        }
+        jid = job->jid;
+    } else {
+        printf("%s: argument must be a PID or %%jobid\n", argv[0]);
+        return;
+    }
+
+    // Execute fg/bg
+    if (strcmp(argv[0], "bg") == 0) {
+        printf("[%d] (%d) %s", jid, pid, job->cmdline);
+        job->state = BG;
+        kill(-pid, SIGCONT);
+    } else if (strcmp(argv[0], "fg") == 0) {
+        // printf("[%d] (%d) %s", jid, pid, job->cmdline);
+        job->state = FG;
+        kill(-pid, SIGCONT);
+        waitfg(pid);
+    }
+    return;
+}
+\end{minted}
+
+这段代码首先检查了输入指令的合法性，如果不合法会输出相应提示。对于合法的输入，会使用\texttt{kill}函数向命令中的指定进程发送\texttt{SIGCONT}信号来继续执行该进程并且将其状态设置为前台或后台。
+
+\subsection{\texttt{waitfg}函数和信号处理函数}
+\label{sec:signal_handlers}
+
+\texttt{waitfg}函数会等待前台进程结束，并对其回收；\texttt{sigchld\_handler}函数会在接收到子进程发送的\texttt{SIGCHLD}信号时进行工作回收，二者逻辑相似，使用刚刚实现的\texttt{job\_reaping}函数即可完成对应逻辑：
+
+\begin{minted}{c}
+void waitfg(pid_t pid) {
+    int status;
+    if (waitpid(pid, &status, WUNTRACED) == pid) {
+        job_reaping(pid, status);
+    }
+    verbose_printf("waitfg: Process (%d) no longer the fg process\n",
+                   pid);
+}
+
+void sigchld_handler(int sig) {
+    verbose_printf("sigchld_handler: entering\n");
+
+    int status;
+    pid_t pid;
+    while ((pid = waitpid(-1, &status, WNOHANG | WUNTRACED)) > 0) {
+        job_reaping(pid, status);
+    }
+
+    verbose_printf("sigchld_handler: exiting\n");
+}
+\end{minted}
+
+读者可能会有疑问，前台进程退出时，两个函数可能都会被调用，是否有可能因为二者都调用了\texttt{job\_reaping}函数而导致错误？答案是不会的，因为在一个进程中只会有一个\texttt{waitpid}函数会获取到子进程的退出状态，无法获取的\texttt{waitpid}函数不会返回进程号，因此只有一个函数会回收前台进程。
+
+实验还要求实现\texttt{SIGINT}和\texttt{SIGTSTP}信号的处理函数，可以使用\texttt{kill}函数向前台进程所在的进程组发送相应信号：
+
+\begin{minted}{c}
+void sigint_handler(int sig) {
+    verbose_printf("sigint_handler: entering\n");
+    pid_t pid = fgpid(jobs);
+    if (pid > 0) {
+        kill(-pid, SIGINT);
+        verbose_printf("sigint_handler: Job (%d) killed\n", pid);
+    }
+    verbose_printf("sigint_handler: exiting\n");
+    return;
+}
+
+void sigtstp_handler(int sig) {
+    verbose_printf("sigtstp_handler: entering\n");
+    pid_t pid = fgpid(jobs);
+    if (pid > 0) {
+        verbose_printf("sigtstp_handler: Job [%d] (%d) stopped\n",
+                       pid2jid(pid), pid);
+        kill(-pid, SIGTSTP);
+    }
+    verbose_printf("sigtstp_handler: exiting\n");
+    return;
+}
+\end{minted}
+
+\subsection{测试}
+
+经测试，实验提供的\texttt{tsh}程序可以正常运行，并且运行结果与实验资源中提供的测试样例一致。
+
+由于实验中实现进程回收的方式与\texttt{tshref}实现的方式可能存在不同，后者的进程回收统一在\texttt{sigchld\_handler}中进行，所以在开启\texttt{-v}选项时，输出的内容会存在差异。由于部分老师要求实现的程序需要与\texttt{tshref}具有一样的行为，在这一要求下，注释掉\texttt{sigchld\_handler}中的\texttt{verbose\_printf}函数，将\texttt{job\_reaping}中输出的日志伪造成\texttt{sigchld\_handler}的输出即可。
+
+\begin{minted}{c}
+void job_reaping(pid_t pid, int status) {
+    verbose_printf("sigchld_handler: entering\n");
+    if (WIFEXITED(status)) {
+        deletejob(jobs, pid);
+        verbose_printf("sigchld_handler: Job [%d] (%d) deleted\n",
+                       pid2jid(pid), pid);
+    } else if (WIFSIGNALED(status)) {
+        int jid = pid2jid(pid);
+        int sig = WTERMSIG(status);
+        deletejob(jobs, pid);
+        verbose_printf("sigchld_handler: Job [%d] (%d) deleted\n", jid,
+                       pid);
+        printf("Job [%d] (%d) terminated by signal %d\n", jid, pid,
+               sig);
+    } else if (WIFSTOPPED(status)) {
+        int jid = pid2jid(pid);
+        int sig = WSTOPSIG(status);
+        struct job_t* job = getjobjid(jobs, jid);
+        job->state = ST;
+        printf("Job [%d] (%d) stopped by signal %d\n", jid, pid, sig);
+    }
+    verbose_printf("sigchld_handler: exiting\n");
+}
+\end{minted}
+
+\section{总结}
+\subsection{实验中出现的问题}
+
+\begin{itemize}
+    \item 实验过程中Visual Studio Code刚开始一直对实验资源提供的代码提示错误，但又可以正常通过\texttt{make}命令构建。后来发现按照代码规范，要启用GNU提供的扩展功能才能使用\texttt{sigset\_t}等信号相关的类型，在预处理部分添加\texttt{\#define \_GNU\_SOURCE}解决了这一问题。
+    \item 在\ref{sec:signal_handlers}节中，实现\texttt{sigchld\_handler}函数时，调用\texttt{waitpid}函数时一开始并没有开启\texttt{WNOHANG}选项，导致\texttt{sigchld\_handler}可能会被阻塞，在查阅\texttt{waitpid}的手册后了解了这一API的基本使用方法，添加了所需选项实现了所需功能。
+\end{itemize}
+
+\subsection{心得体会}
+
+通过本次ShellLab实验，我深入理解了Linux系统中进程控制和信号处理的机制。实验要求实现一个简易的Shell，支持前后台作业管理、信号处理以及内置命令的执行，这使我对操作系统的核心概念有了更直观的认识。
+
+在实验过程中，我学会了如何使用\texttt{fork}创建子进程，利用\texttt{execve}执行新程序，以及通过\texttt{waitpid}等待子进程的结束。同时，掌握了如何设置进程组ID，以便正确地向前台作业发送信号。此外，实验中对\texttt{SIGCHLD}、\texttt{SIGINT}和\texttt{SIGTSTP}等信号的处理，使我理解了信号在进程间通信中的重要作用。
+
+通过调试和测试，我体会到编写健壮的系统程序需要细致的思考和严谨的编码习惯。例如，在处理信号时，必须注意阻塞和解除阻塞的时机，以防止竞态条件的发生。实验还让我认识到，良好的代码结构和清晰的逻辑对于实现复杂功能至关重要。
+
+总的来说，ShellLab实验不仅提升了我的编程能力，更加深了我对操作系统原理的理解，为后续学习和实践打下了坚实的基础。
+
+\end{document}

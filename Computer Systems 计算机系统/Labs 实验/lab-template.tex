@@ -1,0 +1,81 @@
+\documentclass[a4paper, 11pt]{ctexart}
+\usepackage[top=2.54cm, bottom=2.54cm, left=3.18cm, right=3.18cm]{geometry}
+\usepackage{titlesec}
+\usepackage{hyperref}
+\usepackage{setspace}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+\usepackage{listings}
+\usepackage{xcolor}
+\setstretch{1.5}
+
+\let\oldsection\section
+\renewcommand{\section}{\clearpage\oldsection}
+\ctexset{
+    section = {
+        format = \raggedright\zihao{3}\heiti
+    }
+}
+
+% 设置页眉页脚
+\pagestyle{fancy}
+\fancyhf{}
+\setlength{\headheight}{1.5cm}
+\fancyhead[C]{xxx实验报告}
+\renewcommand{\headrulewidth}{0.5pt}
+\fancyfoot[C]{\textbf{\thepage\quad/\quad\pageref{LastPage}}}
+
+\begin{document}
+
+%%%%% Cover Page %%%%%
+\begin{titlepage}
+    \begin{center}
+        \vspace*{5cm}
+        \yahei\zihao{1}《计算机系统》\\ \vspace{50pt}xxx实验报告
+        \vfill
+        \zihao{3}
+        \begin{tabular}{ll}
+            班级: & 计科1145\\
+            学号: & 141919818848\\
+            姓名: & 田浩贰\\
+        \end{tabular} 
+    \end{center}
+\end{titlepage}
+\setcounter{page}{2}
+
+%%%%% Table of Contents %%%%%
+\renewcommand{\contentsname}{\centering 目录}
+\tableofcontents
+
+\section{实验项目}
+\setcounter{subsection}{0}
+\subsection{项目名称}
+（内容待补充）
+
+\subsection{实验目的}
+（内容待补充）
+
+\subsection{实验资源}
+（内容待补充）
+
+\section{实验任务}
+\subsection{实验任务A}
+\textbf{任务名称:} 
+（内容待补充）
+
+\subsection{实验任务B}
+（内容待补充）
+
+\subsection{实验任务C}
+（内容待补充）
+
+\section{总结}
+\subsection{实验中出现的问题}
+\begin{itemize}
+    \item 分任务列出实验中出现的问题
+\end{itemize}
+
+\subsection{心得体会}
+（内容待补充）
+
+\end{document}

@@ -1,0 +1,628 @@
+\documentclass[a4paper, 11pt]{ctexart}
+\usepackage[top=2.54cm, bottom=2.54cm, left=3.18cm, right=3.18cm]{geometry}
+\usepackage{titlesec}
+\usepackage{hyperref}
+\usepackage{setspace}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+\usepackage{minted}
+\usepackage{needspace}
+\usepackage{amsmath}
+\usepackage{lmodern}
+\usepackage{tikz}
+\usepackage{tikz-qtree}
+
+% stretch line spacing
+\setstretch{1.5}
+\AtBeginEnvironment{minted}{\singlespacing}
+\AtBeginEnvironment{equation}{\singlespacing}
+
+% titlesec settings
+\let\oldsection\section
+\renewcommand{\section}{\clearpage\oldsection}
+
+% ctex settings
+\ctexset{
+    section = {
+        format = \raggedright\zihao{3}\heiti
+    }
+}
+
+% fancyhdr settings
+\pagestyle{fancy}
+\fancyhf{}
+\setlength{\headheight}{1.5cm}
+\fancyhead[C]{BombLab实验报告}
+\renewcommand{\headrulewidth}{0.5pt}
+\fancyfoot[C]{\textbf{\thepage\quad/\quad\pageref{LastPage}}}
+
+% minted settings
+\setminted{
+    linenos,
+    frame = single
+}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Begin Document
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{document}
+\sloppy
+%%%%% Cover Page %%%%%
+\begin{titlepage}
+    \begin{center}
+        \vspace*{5cm}
+        \yahei\zihao{1}《计算机系统》\\ \vspace{50pt}BombLab实验报告
+        \vfill
+        \zihao{3}
+        \begin{tabular}{ll}
+            班级: & GitHub\\
+            学号: & 78268851\\
+            姓名: & AnicoderAndy\\
+        \end{tabular}
+    \end{center}
+\end{titlepage}
+\setcounter{page}{2}
+
+%%%%% Table of Contents %%%%%
+\renewcommand{\contentsname}{\centering 目录}
+\tableofcontents
+
+\section{实验项目}
+\setcounter{subsection}{0}
+\subsection{项目名称}
+BombLab拆弹实验。
+
+\subsection{实验目的}
+\begin{itemize}
+    \item 熟悉gdb调试工具的使用，掌握基本调试命令。
+    \item 理解x86汇编代码的执行逻辑，掌握函数调用约定、寄存器使用等底层知识。
+    \item 熟悉逆向工程的基本方法，掌握逆向工程的基本技巧，培养逆向工程和二进制分析的能力。
+\end{itemize}
+
+\subsection{实验资源}
+\texttt{bomb.tar}压缩包，包含了\texttt{bomb}二进制文件、\texttt{bomb.c}和\texttt{README}文件。
+
+运行\texttt{bomb}发现需要输入6个阶段的密码以破解炸弹。
+使用\texttt{objdump -D bomb > dumpfile.s}得到反汇编文件。每次输入密码后会调用当前阶段的函数以验证密码。下面通过分析这些函数的逻辑得到每个阶段的密码。
+
+\section{实验任务}
+\subsection{Phase 1}
+通过objdump得到\texttt{phase\_1}函数的汇编代码如下\footnote{本报告给出的所有汇编代码中，跳转指令后注释的数字表示该指令跳转目标位置代码中的行号。}：
+
+\begin{minted}{gas}
+sub    $0x14,%esp
+push   $0x8049fa4
+push   0x1c(%esp)
+call   8048f90 <strings_not_equal>
+add    $0x10,%esp
+test   %eax,%eax
+je     8048b50 <phase_1+0x1d>       ; line 9
+call   8049087 <explode_bomb>
+add    $0xc,%esp
+ret
+\end{minted}
+
+该函数传入一个字符串参数，调用\texttt{strings\_not\_equal}函数比较传入字符串与内存地址\texttt{0x8049fa4}处的字符串是否相等，如果不相等函数\texttt{strings\_not\_equal}会返回\texttt{1}，无法执行第7行的跳转命令，从而调用\texttt{explode\_bomb}函数引爆炸弹。
+
+运行\texttt{gdb -q bomb}，输入\texttt{x/s 0x8049fa4}查看内存地址\texttt{0x8049fa4}处的字符串为“\texttt{The moon unit will be divided into two divisions.}”，因此输入该字符串即可通过第一关。
+
+\subsection{Phase 2}
+\label{ssc:phase2}
+通过objdump得到\texttt{phase\_2}函数的汇编代码。
+
+\begin{minted}{gas}
+push   %esi
+push   %ebx
+sub    $0x2c,%esp
+mov    %gs:0x14,%eax
+mov    %eax,0x24(%esp)
+xor    %eax,%eax
+lea    0xc(%esp),%eax
+push   %eax                         ; address of the first number
+push   0x3c(%esp)
+call   80490ac <read_six_numbers>
+add    $0x10,%esp
+cmpl   $0x0,0x4(%esp)
+jne    8048b84 <phase_2+0x30>       ; line 16
+cmpl   $0x1,0x8(%esp)
+je     8048b89 <phase_2+0x35>       ; line 17
+call   8049087 <explode_bomb>
+\end{minted}
+
+以上的逻辑通过\texttt{read\_six\_numbers}函数读入6个整数（分析\texttt{read\_six\_numbers}部分的汇编代码得到该函数第一个参数传入输入字符串，第二个参数传入存储6个整数的首地址）。之后比较输入的第一个和第二个整数是否为\texttt{0}和\texttt{1}，如果不是则引爆炸弹。
+
+\begin{minted}[firstnumber=17]{gas}
+lea    0x4(%esp),%ebx
+lea    0x14(%esp),%esi
+mov    0x4(%ebx),%eax
+add    (%ebx),%eax
+cmp    %eax,0x8(%ebx)
+je     8048ba0 <phase_2+0x4c>       ; line 24
+call   8049087 <explode_bomb>
+add    $0x4,%ebx
+cmp    %esi,%ebx
+jne    8048b91 <phase_2+0x3d>       ; line 19
+mov    0x1c(%esp),%eax
+xor    %gs:0x14,%eax
+je     8048bb9 <phase_2+0x65>
+call   8048790 <__stack_chk_fail@plt>
+add    $0x24,%esp
+pop    %ebx
+pop    %esi
+ret
+\end{minted}
+
+分析可知以上部分的逻辑通过循环检查6个整数。每次循环检查当前位置的整数与下一整数位置的和是否等于下下一整数位置的值，如果不等则引爆炸弹，大致可以用以下C代码表示：
+
+\begin{samepage}
+\begin{minted}{C}
+for (int* p = numbers; p < numbers + 4; p++)
+    if (*p + *(p + 1) != *(p + 2))
+        explode_bomb();
+\end{minted}
+\end{samepage}
+
+即需保证输入序列是前两项为$0, 1$的斐波那契数列。因此输入\texttt{0 1 1 2 3 5}即可通过第二关。
+
+\subsection{Phase 3}
+\label{ssc:phase3}
+使用objdump得到\texttt{phase\_3}函数的汇编代码如下：
+
+\begin{minted}{gas}
+sub    $0x1c,%esp
+mov    %gs:0x14,%eax
+mov    %eax,0xc(%esp)
+xor    %eax,%eax
+lea    0x8(%esp),%eax                   ; address of input2
+push   %eax
+lea    0x8(%esp),%eax                   ; address of input1
+push   %eax
+push   $0x804a16f                       ; "%d %d"
+push   0x2c(%esp)
+call   8048810 <__isoc99_sscanf@plt>
+add    $0x10,%esp
+cmp    $0x1,%eax
+jg     8048bf3 <phase_3+0x34>           ; line 16
+call   8049087 <explode_bomb>
+cmpl   $0x7,0x4(%esp)
+ja     8048c36 <phase_3+0x77>           ; line 40
+mov    0x4(%esp),%eax
+jmp    *0x804a000(,%eax,4)
+mov    $0x2db,%eax                      ; 1 jumps here
+jmp    8048c47 <phase_3+0x88>           ; line 38
+mov    $0x107,%eax                      ; 2 jumps here
+jmp    8048c47 <phase_3+0x88>           ; line 38
+mov    $0x156,%eax                      ; 3 jumps here
+jmp    8048c47 <phase_3+0x88>           ; line 38
+mov    $0x1f8,%eax                      ; 4 jumps here
+jmp    8048c47 <phase_3+0x88>           ; line 38
+mov    $0x15d,%eax                      ; 5 jumps here
+jmp    8048c47 <phase_3+0x88>           ; line 38
+mov    $0x150,%eax                      ; 6 jumps here
+jmp    8048c47 <phase_3+0x88>           ; line 38
+mov    $0x27f,%eax                      ; 7 jumps here
+jmp    8048c47 <phase_3+0x88>           ; line 38
+call   8049087 <explode_bomb>
+mov    $0x0,%eax
+jmp    8048c47 <phase_3+0x88>           ; line 38
+mov    $0x2ae,%eax                      ; 0 jumps here
+cmp    0x8(%esp),%eax
+je     8048c52 <phase_3+0x93>
+call   8049087 <explode_bomb>
+mov    0xc(%esp),%eax
+xor    %gs:0x14,%eax
+je     8048c64 <phase_3+0xa5>
+call   8048790 <__stack_chk_fail@plt>
+add    $0x1c,%esp
+ret
+\end{minted}
+
+这段代码首先用\texttt{sscanf}函数读入两个整数，并且要求第二个输入数在区间$[0,7]$以内（第5--17行）。观察第18--36行汇编代码，发现这是一个典型的\texttt{switch}语句，根据输入的第一个整数的值跳转到不同的位置。根据第19行给出的地址\texttt{0x804a000}，在gdb中找到跳转地址表，根据跳转地址表找到不同输入值跳转到的位置（已在注释中标注）。该结构的每个\texttt{case}都会将一个特定值移入寄存器\texttt{eax}，然后与第二个输入值比较，如果相等则通过。从8个可能的组合中任选一个（例如选择\texttt{0 686}）即可通过第三关。
+
+\subsection{Phase 4}
+\subsubsection{校验函数}
+\label{sssec:phase4_checker}
+使用objdump得到\texttt{phase\_4}函数的汇编代码如下所示：
+
+\begin{minted}{gas}
+sub    $0x1c,%esp
+mov    %gs:0x14,%eax
+mov    %eax,0xc(%esp)
+xor    %eax,%eax
+lea    0x4(%esp),%eax                   ; address of input2
+push   %eax
+lea    0xc(%esp),%eax                   ; address of input1
+push   %eax
+push   $0x804a16f                       ; "%d %d"
+push   0x2c(%esp)
+call   8048810 <__isoc99_sscanf@plt>
+add    $0x10,%esp
+cmp    $0x2,%eax
+jne    8048ce6 <phase_4+0x3b>           ; line 19
+mov    0x4(%esp),%eax
+sub    $0x2,%eax
+cmp    $0x2,%eax
+jbe    8048ceb <phase_4+0x40>           ; line 20
+call   8049087 <explode_bomb>
+sub    $0x8,%esp
+push   0xc(%esp)
+push   $0x9
+call   8048c68 <func4>
+add    $0x10,%esp
+cmp    0x8(%esp),%eax
+je     8048d07 <phase_4+0x5c>
+call   8049087 <explode_bomb>
+mov    0xc(%esp),%eax
+xor    %gs:0x14,%eax
+je     8048d19 <phase_4+0x6e>
+call   8048790 <__stack_chk_fail@plt>
+add    $0x1c,%esp
+ret
+\end{minted}
+
+该函数第5--14行的指令通过\texttt{sscanf}函数读入两个整数。第15--19行检查\texttt{输入2}的值，要求其减去$2$后在区间$[0,2]$以内，也就是\texttt{输入2}的值只能是\texttt{2, 3, 4}。第20--23行调用\texttt{func4}函数，依次将\texttt{9}和\texttt{输入2}作为参数传入。最后（第25--27行）比较\texttt{func4}的返回值与\texttt{输入1}，如果二者不相等则引爆炸弹。
+
+\subsubsection{func4函数}
+通过objdump得到\texttt{func4}函数的汇编代码如下：
+
+\begin{minted}{gas}
+push   %edi
+push   %esi
+push   %ebx
+mov    0x10(%esp),%ebx
+mov    0x14(%esp),%edi
+test   %ebx,%ebx
+jle    8048ca2 <func4+0x3a>     ; line 25
+mov    %edi,%eax
+cmp    $0x1,%ebx
+je     8048ca7 <func4+0x3f>     ; line 26
+sub    $0x8,%esp
+push   %edi
+lea    -0x1(%ebx),%eax
+push   %eax
+call   8048c68 <func4>
+add    $0x8,%esp
+lea    (%edi,%eax,1),%esi
+push   %edi
+sub    $0x2,%ebx
+push   %ebx
+call   8048c68 <func4>
+add    $0x10,%esp
+add    %esi,%eax
+jmp    8048ca7 <func4+0x3f>     ; line 26
+mov    $0x0,%eax
+pop    %ebx
+pop    %esi
+pop    %edi
+ret
+\end{minted}
+
+该函数通过栈来传递两个参数，不妨记两个参数为$a, b$。第6--7行检查$b$是否小于等于$0$，如果是则返回$0$。第8--10行检查$b$是否等于$1$，如果是则返回$a$。第11--17行递归调用函数自身，传入参数$a-1, b$，将函数返回值加上$b$后暂存至寄存器\texttt{esi}；第18--24行再次递归调用函数自身，传入参数$a-2, b$，将函数返回值加上\texttt{esi}后返回。
+
+总结以上行为，令该函数为$f(a, b)$，则有：
+
+\begin{equation*}
+    f(a, b) = \begin{cases}
+        0, & b \leq 0 \\
+        a, & b = 1 \\
+        f(a-1, b) + f(a-2, b) + b, & \text{otherwise}
+    \end{cases}
+\end{equation*}
+
+\subsubsection{小结}
+根据上面的分析，现需要输入两个数使得$\text{input}_1 = f(9, \text{input}_2)$，同时$2\le\text{input}_2\le 4$。编写C程序计算$f(9, 3)=264$，不妨输入\texttt{264 3}通过第四关。
+
+\subsection{Phase 5}
+通过objdump得到\texttt{phase\_5}函数的汇编代码如下：
+
+\begin{minted}{gas}
+push   %ebx
+sub    $0x14,%esp
+mov    0x1c(%esp),%ebx
+push   %ebx                     ; address of input string
+call   8048f71 <string_length>
+add    $0x10,%esp
+cmp    $0x6,%eax
+je     8048d38 <phase_5+0x1b>   ; line 10
+call   8049087 <explode_bomb>
+mov    %ebx,%eax
+add    $0x6,%ebx                ; address of the end of the string
+mov    $0x0,%ecx                ; accumulator
+movzbl (%eax),%edx
+and    $0xf,%edx                ; get the low 4 bits of the character
+add    0x804a020(,%edx,4),%ecx
+add    $0x1,%eax
+cmp    %ebx,%eax
+jne    8048d42 <phase_5+0x25>   ; line 13
+cmp    $0x21,%ecx
+je     8048d60 <phase_5+0x43>   ; line 22
+call   8049087 <explode_bomb>
+add    $0x8,%esp
+pop    %ebx
+ret
+\end{minted}
+
+这段逻辑中，第4--9行调用\texttt{string\_length}函数计算输入字符串的长度，要求长度为$6$。第10--18行是一个循环结构：用寄存器\texttt{eax}遍历输入字符串的每个字符，通过按位与\texttt{0xf}的方式取出字符ASCII码的低4位，将结果暂存至寄存器\texttt{edx}；将内存地址\texttt{0x804a020 + edx}中的值累加到寄存器\texttt{ecx}中。第19--21行比较\texttt{ecx}中存放的累加结果是否为$0x21$。
+
+使用gdb输入命令\texttt{x/16wd 0x804a020}查看内存地址\texttt{0x804a020}处的值，发现是一个长度为$16$的整数数组
+\begin{equation*}
+a=\{2,10,6,1,12,16,9,3,4,7,14,5,11,8,15,13\}
+\end{equation*}
+
+因此只需输入一个长度为$6$的字符串，使得字符串中每个字符ASCII码低4位在数组中对应位置的值之和为$(21)_{16}$即可。不妨构造字符串\texttt{STICKY}通过第五关。
+
+\subsection{Phase 6}
+
+通过objdump解析\texttt{phase\_6}函数的汇编代码，分为以下阶段：
+
+\subsubsection{输入合规性检查}
+\begin{minted}{gas}
+push   %esi
+push   %ebx
+sub    $0x4c,%esp
+mov    %gs:0x14,%eax
+mov    %eax,0x44(%esp)
+xor    %eax,%eax
+lea    0x14(%esp),%eax
+push   %eax
+push   0x5c(%esp)
+call   80490ac <read_six_numbers>
+add    $0x10,%esp
+mov    $0x0,%esi                    ; i = 0
+mov    0xc(%esp,%esi,4),%eax        ; eax = a[i]
+sub    $0x1,%eax
+cmp    $0x5,%eax
+jbe    8048d9d <phase_6+0x38>       ; 0 <= a[i] - 1 <= 5
+call   8049087 <explode_bomb>
+add    $0x1,%esi                    ; increment i
+cmp    $0x6,%esi                    ; outer loop condition
+je     8048dd8 <phase_6+0x73>       ; line 39
+mov    %esi,%ebx                    ; begin inner loop
+mov    0xc(%esp,%ebx,4),%eax        ; eax = a[j]
+cmp    %eax,0x8(%esp,%esi,4)
+jne    8048db6 <phase_6+0x51>       ; a[j] != a[i]
+call   8049087 <explode_bomb>
+add    $0x1,%ebx
+cmp    $0x5,%ebx
+jle    8048da7 <phase_6+0x42>       ; line 22
+jmp    8048d8c <phase_6+0x27>       ; line 13
+\end{minted}
+
+这段逻辑在第10行读入6个整数以后，在13--29行开始遍历读入的数组$a$，首先在第14--17行检查$a[i]$是否在区间$[1, 6]$中，接着在第18--28行进入内层嵌套循环，检查$a[i+1]\sim a[5]$是否不等于$a[i]$。
+
+用C代码表示上述逻辑如下：
+
+\begin{minted}{C}
+read_six_numbers(input_string, a);
+for (int i = 0; i < 6; i++) {
+    if (a[i] < 1 || a[i] > 6)
+        explode_bomb();
+    for (int j = i + 1; j < 6; j++)
+        if (a[j] == a[i])
+            explode_bomb();
+}
+\end{minted}
+
+综上所述，输入的六个数是$1\sim 6$的一个排列。
+
+\subsubsection{复制链表节点指针}
+\label{sssec:cp_list}
+值得注意的是，合规性检查完成循环后，会跳转到下面代码的第39行开始运行。
+
+\begin{minted}[firstnumber=30]{gas}
+mov    0x8(%edx),%edx           ; move forward along the list
+add    $0x1,%eax                ; (inner loop):
+cmp    %ecx,%eax                ; (a[i] - 1) moves are needed
+jne    8048dc0 <phase_6+0x5b>   ; line 30
+mov    %edx,0x24(%esp,%esi,4)   ; copy pointer to current node to b[i]
+add    $0x1,%ebx
+cmp    $0x6,%ebx
+jne    8048ddd <phase_6+0x78>   ; line 39 <Continue loop>
+jmp    8048df4 <phase_6+0x8f>   ; line 47 <Terminate loop>
+mov    $0x0,%ebx                ; ENTRY
+mov    %ebx,%esi
+mov    0xc(%esp,%ebx,4),%ecx
+mov    $0x1,%eax
+mov    $0x804c13c,%edx
+cmp    $0x1,%ecx
+jg     8048dc0 <phase_6+0x5b>   ; line 30 <a[i] > 1>
+jmp    8048dca <phase_6+0x65>   ; line 34 <a[i] == 1>
+\end{minted}
+
+这段逻辑从39行开始进行循环，循环变量$i$从$0$开始，记录在寄存器\texttt{ebx}和\texttt{esi}中。每次循环开始都会将$a[i]$存入寄存器\texttt{ecx}，将一个特殊的地址\texttt{0x804c13c}存放在寄存器\texttt{edx}中。接着会连续$a[i]-1$次将\texttt{edx+8}处的值存入\texttt{edx}。由于\texttt{edx}的初值很像是一个地址且其被调用的行为也与地址相似，猜测\texttt{edx+8}处存放的内容也是地址，以\texttt{0x804c13c}为首地址处存放了每个单元长度为12字节的数据结构。
+
+使用gdb输入\texttt{x/3wx 0x804c13c}查看该地址存放的内容：
+
+\begin{minted}{text}
+(gdb) x/3wx 0x804c13c
+0x804c13c <node1>:      0x000003c5      0x00000001      0x0804c148
+(gdb)
+0x804c148 <node2>:      0x000000ae      0x00000002      0x0804c154
+(gdb)
+0x804c154 <node3>:      0x000000f3      0x00000003      0x0804c160
+(gdb)
+0x804c160 <node4>:      0x000000bb      0x00000004      0x0804c16c
+(gdb)
+0x804c16c <node5>:      0x000000c7      0x00000005      0x0804c178
+(gdb)
+0x804c178 <node6>:      0x0000014b      0x00000006      0x00000000
+\end{minted}
+
+发现先前的猜测正确，每个单元最后4字节都存放了互相关联的地址。分析这一数据结构，可将其抽象为链表。链表的每个节点依次存放了数据、编号、下一节点地址。
+
+回到\texttt{phase\_6}函数，第30--33行执行的逻辑是将当前指针沿着链表向前移动$a[i]-1$个节点，第34--36行则将指向当前节点的指针拷贝到一个新开辟的数组$b$中。
+
+\subsubsection{重组链表和顺序检查}
+\begin{minted}[firstnumber=47]{gas}
+mov    0x24(%esp),%ebx                  ; b[0]
+lea    0x24(%esp),%eax                  ; &b[1]
+lea    0x38(%esp),%esi                  ; &b[5]
+mov    %ebx,%ecx                        ; b[0] <end of init.>
+mov    0x4(%eax),%edx
+mov    %edx,0x8(%ecx)                   ; b[i]->next = b[i + 1]
+add    $0x4,%eax
+mov    %edx,%ecx
+cmp    %esi,%eax                        ; loop condition
+jne    8048e02 <phase_6+0x9d>           ; line 51
+movl   $0x0,0x8(%edx)                   ; b[5]->next = NULL
+mov    $0x5,%esi
+mov    0x8(%ebx),%eax                   ; nowP = lastP->next
+mov    (%eax),%eax
+cmp    %eax,(%ebx)                      ; lastP->data <= nowP->data
+jle    8048e2b <phase_6+0xc6>           ; line 64
+call   8049087 <explode_bomb>
+mov    0x8(%ebx),%ebx
+sub    $0x1,%esi                        ; loop control
+jne    8048e1d <phase_6+0xb8>           ; line 59
+mov    0x3c(%esp),%eax
+xor    %gs:0x14,%eax
+je     8048e45 <phase_6+0xe0>
+call   8048790 <__stack_chk_fail@plt>
+add    $0x44,%esp
+pop    %ebx
+pop    %esi
+ret
+\end{minted}
+
+这段代码在第47--57行将\ref{sssec:cp_list}节中提到的链表顺序按照数组$b$中的顺序重组。具体地，该逻辑将遍历数组$b$，使$b[i]$指向节点的下一节点指针指向$b[i+1]$。遍历完成后使最后一个节点的下一节点指针置零。用C代码表示如下：
+
+\begin{minted}{C}
+for (int* p = b; p != b + 5; p++)
+    p->next = *(p + 1);
+b[5]->next = NULL;
+\end{minted}
+
+汇编代码在第58--66行遍历检查链表的数据是否服从递增顺序。具体地，寄存器\texttt{ebx}中存放上一个节点的地址，寄存器\texttt{eax}中存放当前节点的地址，初始时二者分别指向链表首节点和第二个节点。每次循环在第60--63行比较上一个节点的数据是否小于等于当前节点的数据，在第64行更新寄存器\texttt{ebx}的值，第59行更新寄存器\texttt{eax}的值。以上循环用寄存器\texttt{esi}控制循环次数为5次。用C代码表示如下：
+
+\needspace{3\baselineskip}
+\begin{minted}{C}
+int i = 5;
+node* lastP = b[0];
+while (i--) {
+    if (lastP->data > lastP->next->data)
+        explode_bomb();
+    lastP = lastP->next;
+}
+\end{minted}
+
+\subsubsection{小结}
+
+综上所述，\texttt{phase\_6}函数要求输入一个$1\sim 6$的排列。其后会根据输入顺序重组\ref{sssec:cp_list}节中提到的链表，使得该链表节点数据按照递增顺序排列。
+
+符合要求的答案为\texttt{2 4 5 3 6 1}。
+
+\subsection{Secret Phase}
+\subsubsection{寻找入口}
+在使用objdump得到的反汇编文件中，发现了一个\texttt{secret\_phase}函数。查找该函数的被调用情况，发现其首先会被函数\texttt{phase\_defused}函数调用。检查\texttt{phase\_defused}的汇编代码，发现其会在\texttt{0x804c3cc}地址存放的变量等于6时，将\texttt{0x804c4d0}处的字符串传入\texttt{sscanf}，执行一系列判断符合要求后调用\texttt{secret\_phase}函数。
+
+将先前6题的答案输入文件\texttt{key}，接着在终端执行\texttt{gdb -q bomb}，执行以下命令：
+
+\begin{minted}{text}
+watch *0x804c3cc
+watch *0x804c4d0
+set disassemble-next-line on
+r key
+\end{minted}
+
+gdb会在两个关心的地址发生变化时停止程序运行。\texttt{0x804c3cc}存放的变量在每次调用\texttt{read\_line}函数时会加一，其作用是记录读入的行数。\texttt{0x804c4d0}会在\texttt{phase\_4}被调用前被更改。使用\texttt{x}指令查看该地址的值，得到\texttt{264 3}，正是先前输入的\texttt{phase\_4}的答案。
+
+根据上面的观察，可以知道在6个炸弹全部通过后，\texttt{phase\_defused}函数会将\texttt{phase\_4}的答案传入\texttt{sscanf}函数，同时传入格式化字符串\texttt{"\%d \%d \%s"}。也就是在\texttt{phase\_4}的答案后还需要输入一个字符串，\texttt{phase\_defused}函数会将读入的字符串与\texttt{0x804a1d2}处的字符串（通过gdb查看内存得到\texttt{"DrEvil"}）比较，如果相等则调用\texttt{secret\_phase}函数。
+
+在先前\texttt{Phase 4}的答案后添加\texttt{DrEvil}，其他答案不变，输入完全部6个密码后即可进入\texttt{Secret Phase}。
+
+\subsubsection{寻找答案}
+\texttt{secret\_phase}函数将读入字符串传入\texttt{strtol}函数，将其转换为十进制数$x$，检查$x$处在区间$[1,1001]$之后调用函数\texttt{fun7(0x804c088, x)}。如果返回值不等于$7$则会引爆炸弹。下面分析\texttt{fun7}函数的汇编代码：
+
+\begin{minted}{gas}
+push   %ebx
+sub    $0x8,%esp
+mov    0x10(%esp),%edx          ; edx: param1
+mov    0x14(%esp),%ecx          ; ecx: param2
+test   %edx,%edx
+je     8048e92 <fun7+0x47>      ; line 27
+mov    (%edx),%ebx
+cmp    %ecx,%ebx
+jle    8048e74 <fun7+0x29>      ; line 17
+sub    $0x8,%esp
+push   %ecx                     ; param2: ecx
+push   0x4(%edx)                ; param1: *(edx + 4)
+call   8048e4b <fun7>
+add    $0x10,%esp
+add    %eax,%eax
+jmp    8048e97 <fun7+0x4c>      ; line 28
+mov    $0x0,%eax
+cmp    %ecx,%ebx
+je     8048e97 <fun7+0x4c>      ; line 28
+sub    $0x8,%esp
+push   %ecx                     ; param2: ecx
+push   0x8(%edx)                ; param1: *(edx + 8)
+call   8048e4b <fun7>
+add    $0x10,%esp
+lea    0x1(%eax,%eax,1),%eax
+jmp    8048e97 <fun7+0x4c>
+mov    $0xffffffff,%eax
+add    $0x8,%esp
+pop    %ebx
+ret
+\end{minted}
+
+该函数是递归函数，会在\texttt{参数1}等于$0$时返回$-1$（第5--6行），在\texttt{参数1}指向地址等于\texttt{参数2}时返回\texttt{0}（从第9行跳转至第17--19行），其他情况均会调用自身，传入的\texttt{参数2}均为原参数，\texttt{参数1}是原来\texttt{参数1}加$4$或加$8$内存处的值。由于\texttt{参数1}是一个地址，可以推断其加$4$和加$8$内存处也存放了地址，这可能是一个递归的数据结构。使用gdb查看初始传入参数\texttt{0x804c088}附近的值，检查该数据结构：
+
+\begin{minted}{text}
+0x804c088 <n1>:         0x00000024      0x0804c094      0x0804c0a0
+0x804c094 <n21>:        0x00000008      0x0804c0c4      0x0804c0ac
+0x804c0a0 <n22>:        0x00000032      0x0804c0b8      0x0804c0d0
+0x804c0ac <n32>:        0x00000016      0x0804c118      0x0804c100
+(...)
+\end{minted}
+
+不难发现，这是一个树形结构，每个节点依次存放了一个数据、两个子节点的地址。画出树形结构如下：
+
+\begin{center}
+\begin{tikzpicture}
+\tikzset{edge from parent/.style = {draw,
+     edge from parent path = {(\tikzparentnode.south)
+                                -- +(0,-8pt)
+                                -| (\tikzchildnode)}}}
+\Tree[.36
+        [.8
+            [.6 [.1 ] [.7 ] ]
+            [.22 [.20 ] [.35 ] ]
+        ]
+        [.50
+            [.45 [.40 ] [.47 ] ]
+            [.107 [.99 ] [.1001 ] ]
+        ]
+    ]
+\end{tikzpicture}
+\end{center}
+
+不难发现，这是一棵二叉搜索树。从而可以将\texttt{fun7}函数的逻辑用C代码表示如下：
+
+\begin{minted}{C}
+int fun7(node* p, int x) {
+    if (p == NULL) return -1;
+    if (p->data <= x) {
+        if (p->data == x) return 0;
+        return 2 * fun7(p->right, x) + 1;
+    }
+    return 2 * fun7(p->left, x);
+}
+\end{minted}
+
+该函数从树的根节点开始查找\texttt{x}，每次向右的查找都会对答案产生$2^{h}$的贡献（其中$h$表示当前层数），向左的查找不会产生贡献。例如，查找数字\texttt{1001}：从根节点开始向右查找移向\texttt{50}，产生贡献$1$；再向右移向\texttt{107}，产生贡献$2$；最后再向右移向\texttt{1001}，产生贡献$4$——总计产生$7$点贡献。
+
+刚才的示例恰得到了题目所需的函数值，故输入\texttt{1001}即可通过\texttt{Secret Phase}。至此，所有关卡均已通过，炸弹完全得到破解。
+
+\section{总结}
+\subsection{实验中出现的问题}
+\begin{itemize}
+    \item 起初未能正确分析\ref{ssc:phase2}节中取址和取值行为，导致未能正确理解逻辑意图，通过整理、标记不同行为，梳理思路后顺利解决问题。
+    \item 起初未能正确计算\ref{sssec:phase4_checker}节中的输入变量存储的位置，未能找到\texttt{输入1}的用途。通过关注\texttt{add, sub, push, pop}指令的使用以系统化计算寄存器\texttt{esp}的变化，最终得到正确的输入变量行为。
+    \item 在撰写本实验报告时，遇到了诸多\LaTeX{}排版问题，查阅资料后使用\texttt{sloppy}命令解决了行末元素溢出问题，通过安装Python解决了\texttt{minted}宏包无法使用的问题……
+\end{itemize}
+
+\subsection{心得体会}
+本次实验我收获颇丰。首先，该实验大幅加深了我对汇编语言的理解，尽管我最开始阅读汇编代码磕磕绊绊，但通过前几关内容循序渐进的强化记忆，我在阅读后几关以及\texttt{secret\_phase}函数时能迅速理解代码的逻辑，且能在较短时间内还原出源代码的大致框架。第二，通过本次实验，我加强了对gdb工具使用的熟练程度，能够通过gdb快速定位问题，查看内存中的数据，从而更好理解程序内容。第三，该实验让我对基本数据结构在底层的实现有了更深刻的理解，实验中的链表和二叉搜索树结构的汇编代码让我更清晰地了解了基本数据结构在内存中的存储方式以及算法中的调用方式。第四，在撰写实验报告时遇到的诸多问题，让我对\LaTeX{}排版有了更深入的了解，也让我学会了高效查阅资料解决问题的方法。总的来说，这次实验是我大学以来进行的最有趣、最令人激动的实验项目，为我提供了一段非常难忘的学习经历——行文至此，该实验的告一段落甚至让我觉得有些怅然若失。
+
+\end{document}
