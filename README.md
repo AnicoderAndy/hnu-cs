@@ -3,3 +3,6 @@
 
 ## Computer Systems 计算机系统
 此目录中包含了《计算机系统》课程的实验报告。自第二次实验开始，实验报告采用 $\LaTeX$ 排版，目录中提供了 $\LaTeX$ 源代码以及导出的 PDF 文件。目录中还提供了参照课程组提供的 Word 文档进行排版的 $\LaTeX$ 实验报告模板 [`lab-template.tex`](Computer%20Systems%20计算机系统/Labs%20实验/lab-template.tex)。
+
+## Operating System 操作系统
+此目录中包含了《操作系统》课程的实验报告。
